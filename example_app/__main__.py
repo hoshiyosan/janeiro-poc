@@ -1,4 +1,4 @@
-from cookbook.app import app_builder
+from example_app.app import app_builder
 
 cli = app_builder.create_cli()
 
