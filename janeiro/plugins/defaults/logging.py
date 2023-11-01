@@ -32,7 +32,7 @@ def request_id_dependency(
 class JsonFormatter(logging.Formatter):
     def formatMessage(self, record):
         _log = record.__dict__.copy()
-        _log["message"] = _log.pop("msg") % record.__dict__
+        _log["message"] = _log.pop("msg") % record.args
         _log.pop("args")
         return json.dumps(_log)
 
@@ -55,12 +55,14 @@ class LoggingPlugin(Plugin):
 
         if self.log_format == "text":
             stream.formatter = LogFormatter(
-                "%(asctime)s --- %(levelname)s --- %(message)s"
+                "%(asctime)s ::: %(levelname)s ::: %(name)s ::: %(message)s"
             )
         elif self.log_format == "json":
             stream.formatter = JsonFormatter()
 
-        logging.basicConfig(level=self.log_level, handlers=[stream], force=True)
+        logger = logging.getLogger("janeiro")
+        logger.handlers = [stream]
+        logger.setLevel(self.log_level)
 
     def __add_request_tracing(self, api: FastAPI):
         api.router.dependencies.append(Depends(request_id_dependency))

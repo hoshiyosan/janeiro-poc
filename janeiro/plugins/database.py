@@ -39,6 +39,14 @@ class Entity(DeclarativeBase):
 
 
 class DatabasePlugin(Plugin):
+    """Plugin that provides database connection in controllers.
+
+    Additionally brings a command group 'database' with db migration targets.
+
+    Arguments:
+        migrations_folder: Path to folder containing alembic .env file.
+    """
+
     options = [DATABASE_URL_OPTION, DATABASE_AUTO_MIGRATE_OPTION]
 
     def __init__(self, migrations_folder: str):
@@ -47,19 +55,26 @@ class DatabasePlugin(Plugin):
 
     def configure(self, config: Configuration):
         self.config = config
+        self.database_url = self.config.get(DATABASE_URL_OPTION)
+        self.auto_migrate = self.config.get(DATABASE_AUTO_MIGRATE_OPTION)
 
     def _get_alembic_config(self):
         alembic_config = alembic.config.Config()
         alembic_config.set_main_option(
             "script_location", os.path.join(self.migrations_folder)
         )
-        alembic_config.set_main_option(
-            "sqlalchemy.url", self.config.get(DATABASE_URL_OPTION)
-        )
+        alembic_config.set_main_option("sqlalchemy.url", self.database_url)
         return alembic_config
 
+    def _upgrade_db(self, revision: str = None):
+        config = self._get_alembic_config()
+        if revision is None:
+            directory = ScriptDirectory.from_config(config)
+            revision = next(script.revision for script in directory.walk_revisions())
+        alembic.command.upgrade(config, revision)
+
     def register(self, api, cli):
-        self.engine = create_engine(self.config.get(DATABASE_URL_OPTION))
+        self.engine = create_engine(self.database_url)
         session.bind = self.engine
 
         @cli.group("db")
@@ -83,15 +98,12 @@ class DatabasePlugin(Plugin):
         @click.option("--revision")
         def db_upgrade_cmd(revision: str = None):
             """Upgrade database to given revision (defaults to latest)"""
-            config = self._get_alembic_config()
-            if revision is None:
-                directory = ScriptDirectory.from_config(config)
-                revision = next(
-                    script.revision for script in directory.walk_revisions()
-                )
-            alembic.command.upgrade(config, revision)
+            self._upgrade_db(revision)
 
         @db_cli.command("downgrade")
         @click.option("--revision")
         def db_downgrade_cmd(revision: str):
             """Downgrade database to given revision (default to one revision down)"""
+
+        if self.auto_migrate:
+            self._upgrade_db()

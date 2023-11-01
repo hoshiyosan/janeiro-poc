@@ -17,6 +17,6 @@ class EnvironmentConfigLoader(ConfigLoader):
     def get_missing_key_error_message(self, key: str):
         return "Missing required environment variable: %s" % self.get_option_name(key)
 
-    def get(self, option: ConfigOption):
-        variable_name = self.get_option_name(option.key)
+    def get(self, key: str):
+        variable_name = self.get_option_name(key)
         return os.getenv(variable_name, UNDEFINED)
