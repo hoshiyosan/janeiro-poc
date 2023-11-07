@@ -1,0 +1,6 @@
+class JaneiroException(Exception):
+    ...
+
+
+class ConfigurationError(JaneiroException):
+    ...

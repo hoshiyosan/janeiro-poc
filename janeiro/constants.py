@@ -1,1 +1,0 @@
-UNDEFINED = type("UNDEFINED")

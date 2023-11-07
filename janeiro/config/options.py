@@ -1,5 +1,7 @@
 from dataclasses import dataclass
-from typing import Generic, Type, TypeVar
+from typing import Callable, Generic, Type, TypeVar
+
+from janeiro.types import UNDEFINED
 
 T = TypeVar("T")
 
@@ -7,8 +9,16 @@ T = TypeVar("T")
 @dataclass
 class ConfigOption(Generic[T]):
     key: str
-    description: str
     type: Type[T]
+    default: Type[T] = UNDEFINED
+    default_factory: Callable[[], Type[T]] = UNDEFINED
 
-    def is_required(self):
-        return False
+    def get_default(self) -> T:
+        if self.default_factory != UNDEFINED:
+            default_value = self.default_factory()
+        elif self.default != UNDEFINED:
+            default_value = self.default
+        else:
+            default_value = UNDEFINED
+
+        return default_value

@@ -1,109 +1,139 @@
-import os
-
-import alembic.command
-import alembic.config
 import click
-from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine
+from sqlalchemy import Column, Integer, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, scoped_session, sessionmaker
 
-from janeiro.config import ConfigOption, Configuration
-from janeiro.plugins.base import Plugin
+from janeiro.config import ConfigOption
+from janeiro.plugins import Plugin
+
+DB_COMMAND_GROUP = "db"
+
+DATABASE_URL_OPTION = ConfigOption(key="database.url", type=str)
 
 DATABASE_AUTO_MIGRATE_OPTION = ConfigOption(
-    key="database.auto_migrate",
-    description=(
-        "Whether to apply database migration at application startup.",
-        "Warning: avoid using this option if your app has multiple ",
-        "components/instances using same DB.",
-    ),
-    type=bool,
+    key="database.auto_migrate", type=bool, default=False
 )
-
-DATABASE_URL_OPTION = ConfigOption(
-    key="database.url",
-    description=(
-        "SQLAlchemy database URL.",
-        "See following documentation:",
-        "https://docs.sqlalchemy.org/en/20/core/engines.html#database-urls",
-    ),
-    type=str,
-)
-
 
 session = scoped_session(session_factory=sessionmaker())
 
 
-class Entity(DeclarativeBase):
+class DatabaseException(Exception):
     ...
 
 
+class EntityNotFound(Exception):
+    ...
+
+
+class Entity(DeclarativeBase):
+    id = Column(Integer, primary_key=True)
+
+    @classmethod
+    def get_by_id(cls, id: int):
+        entity = session.query(cls).filter(cls.id == id).first()
+        if entity is None:
+            raise EntityNotFound(f"{cls.__name__} with id={id} not found.")
+        return entity
+
+
+class Resource(Entity):
+    __abstract__ = True
+
+    uuid = Column(String(36), unique=True, index=True)
+
+    @classmethod
+    def get_by_uuid(cls, uuid: str):
+        entity = session.query(cls).filter(cls.id == id).first()
+        if entity is None:
+            raise EntityNotFound(f"{cls.__name__} with id={id} not found.")
+        return entity
+
+
 class DatabasePlugin(Plugin):
-    """Plugin that provides database connection in controllers.
+    __plugin__ = "database"
 
-    Additionally brings a command group 'database' with db migration targets.
-
-    Arguments:
-        migrations_folder: Path to folder containing alembic .env file.
-    """
-
-    options = [DATABASE_URL_OPTION, DATABASE_AUTO_MIGRATE_OPTION]
-
-    def __init__(self, migrations_folder: str):
+    def __init__(self, migrations_folder: str = None) -> None:
         super().__init__()
         self.migrations_folder = migrations_folder
 
-    def configure(self, config: Configuration):
-        self.config = config
-        self.database_url = self.config.get(DATABASE_URL_OPTION)
-        self.auto_migrate = self.config.get(DATABASE_AUTO_MIGRATE_OPTION)
+    def cmd_db_init(self):
+        print("Initializing DB...")
 
-    def _get_alembic_config(self):
-        alembic_config = alembic.config.Config()
-        alembic_config.set_main_option(
-            "script_location", os.path.join(self.migrations_folder)
-        )
-        alembic_config.set_main_option("sqlalchemy.url", self.database_url)
-        return alembic_config
+    def cmd_db_ping(self):
+        print("Ping DB")
 
-    def _upgrade_db(self, revision: str = None):
-        config = self._get_alembic_config()
-        if revision is None:
-            directory = ScriptDirectory.from_config(config)
-            revision = next(script.revision for script in directory.walk_revisions())
-        alembic.command.upgrade(config, revision)
+    def cmd_db_revision(self):
+        print("Create DB revision")
 
-    def register(self, api, cli):
+    def cmd_db_upgrade(self):
+        print("Upgrade DB...")
+
+    def cmd_db_downgrade(self):
+        print("Downgrade DB...")
+
+    def configure(self, config):
+        # parse config options
+        self.database_url = config.get(DATABASE_URL_OPTION)
+        self.auto_migrate = config.get(DATABASE_AUTO_MIGRATE_OPTION)
+        # create engine and bind it to session
         self.engine = create_engine(self.database_url)
         session.bind = self.engine
 
-        @cli.group("db")
-        def db_cli():
-            """Set of commands to manage database"""
+    def extend_cli(self, cli):
+        cli.declare_group(DB_COMMAND_GROUP, description="Commands to manage database")
 
-        @db_cli.command("init")
-        def db_init_cmd():
-            """Initialise database schemas (without alembic)."""
-            Entity.metadata.drop_all(self.engine)
-            Entity.metadata.create_all(self.engine)
+        cli.add_command(
+            self.cmd_db_init,
+            name="init",
+            help="Initialize database schemas and tables.",
+            group=DB_COMMAND_GROUP,
+        )
 
-        @db_cli.command("revision")
-        @click.option("-m", "--message")
-        def db_revision_cmd(message: str = None):
-            """Auto generate a new database revision that reflects changes with DB."""
-            config = self._get_alembic_config()
-            alembic.command.revision(config, message, autogenerate=True)
+        cli.add_command(
+            self.cmd_db_ping,
+            name="ping",
+            help="Performs a database connection test.",
+            group=DB_COMMAND_GROUP,
+        )
 
-        @db_cli.command("upgrade")
-        @click.option("--revision")
-        def db_upgrade_cmd(revision: str = None):
-            """Upgrade database to given revision (defaults to latest)"""
-            self._upgrade_db(revision)
+        if self.migrations_folder:
+            cli.add_command(
+                self.cmd_db_revision,
+                name="revision",
+                help="Automatically create a new database revision",
+                group=DB_COMMAND_GROUP,
+                options=[
+                    click.option(
+                        "-m", "--message", help="Short message describing revision"
+                    )
+                ],
+            )
 
-        @db_cli.command("downgrade")
-        @click.option("--revision")
-        def db_downgrade_cmd(revision: str):
-            """Downgrade database to given revision (default to one revision down)"""
+            cli.add_command(
+                self.cmd_db_upgrade,
+                name="upgrade",
+                help="Upgrade database structure to specified revision.",
+                group=DB_COMMAND_GROUP,
+                options=[
+                    click.option(
+                        "-r",
+                        "--revision",
+                        default=None,
+                        help="Identifier of the up revision to apply. Left empty means latest.",
+                    )
+                ],
+            )
 
-        if self.auto_migrate:
-            self._upgrade_db()
+            cli.add_command(
+                self.cmd_db_downgrade,
+                name="downgrade",
+                help="Downgrade database structure to specified revision.",
+                group=DB_COMMAND_GROUP,
+                options=[
+                    click.option(
+                        "-r",
+                        "--revision",
+                        default=None,
+                        help="Identifier of the down revision to apply. Left empty means previous.",
+                    )
+                ],
+            )
