@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from typing import Dict, List
 
 import click
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 from janeiro.api import ApiRegistry
 from janeiro.cli import CliRegistry
@@ -25,6 +25,7 @@ class Application:
     cli: click.Group
     config: Configuration
     plugins: List[Plugin]
+    routers: List[APIRouter]
 
     def __init__(
         self,
@@ -38,6 +39,7 @@ class Application:
         self.api = None
         self.cli = None
         self.config = config
+        self.routers = []
         self.plugins = []
         self.plugins_configured = False
         self.api_config = {
@@ -94,6 +96,9 @@ class Application:
 
         self.api.include_router(api_registry.router)
 
+        for router in self.routers:
+            self.api.include_router(router)
+
     def build_cli(self):
         self.configure_plugins()
 
@@ -137,6 +142,5 @@ class Application:
 
         return self.cli
 
-    @property
-    def include_router(self):
-        return self.get_api().include_router
+    def include_router(self, router: APIRouter):
+        return self.routers.append(router)

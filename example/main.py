@@ -19,7 +19,7 @@ app = Application(
 )
 
 app.use_plugin(LoggingPlugin())
-app.use_plugin(DatabasePlugin())
+app.use_plugin(DatabasePlugin(migrations_folder="migrations"))
 app.use_plugin(AuthPlugin())
 
 app.include_router(example.api.router)
