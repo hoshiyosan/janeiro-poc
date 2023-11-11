@@ -19,7 +19,7 @@ app = Application(
 )
 
 app.use_plugin(LoggingPlugin())
-app.use_plugin(DatabasePlugin(migrations_folder="migrations"))
+app.use_plugin(DatabasePlugin(migrations_module="example.db.migrations"))
 app.use_plugin(AuthPlugin())
 
 app.include_router(example.api.router)
@@ -28,5 +28,3 @@ cli = app.get_cli()
 
 if __name__ == "__main__":
     cli()
-
-# uvicorn.run(api)

@@ -1,11 +1,15 @@
+import os
 import sys
 import time
 from datetime import datetime
 from uuid import uuid4
 
+import alembic.command
+import alembic.config
+import alembic.script
 import click
 import sqlalchemy.exc
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, create_engine
+from sqlalchemy import Column, DateTime, Integer, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, scoped_session, sessionmaker
 
 from janeiro.config import ConfigOption
@@ -91,12 +95,28 @@ class ResourceEntity(Entity):
         return super().update(data)
 
 
+import importlib
+
+
 class DatabasePlugin(Plugin):
     __plugin__ = "database"
 
-    def __init__(self, migrations_folder: str = None) -> None:
+    def __init__(self, migrations_module: str = None) -> None:
         super().__init__()
-        self.migrations_folder = migrations_folder
+        self.migrations_module = importlib.import_module(migrations_module)
+        self.migrations_folder = str(self.migrations_module.__path__[0])
+        print(self.migrations_folder)
+
+    def _get_alembic_config(self):
+        alembic_config = alembic.config.Config()
+        alembic_config.set_main_option("script_location", self.migrations_folder)
+        alembic_config.set_main_option("sqlalchemy.url", self.database_url)
+        return alembic_config
+
+    def _get_latest_revision(self):
+        config = self._get_alembic_config()
+        directory = alembic.script.ScriptDirectory.from_config(config)
+        return next(script.revision for script in directory.walk_revisions())
 
     def cmd_db_init(self):
         Entity.metadata.create_all(self.engine)
@@ -120,15 +140,29 @@ class DatabasePlugin(Plugin):
 
     def cmd_db_sync(self, timeout: int):
         self.cmd_db_ping(timeout=timeout)
+        raise Exception("missing implementation")
 
-    def cmd_db_revision(self):
-        print("Create DB revision")
+    def cmd_db_revision(self, message: str):
+        config = self._get_alembic_config()
+        directory = alembic.script.ScriptDirectory.from_config(config)
+        try:
+            latest_revision = max(
+                int(script.revision) for script in directory.walk_revisions()
+            )
+        except ValueError:
+            latest_revision = 0
+        rev_id = str(latest_revision + 1).zfill(4)
+        alembic.command.revision(config, message, autogenerate=True, rev_id=rev_id)
 
-    def cmd_db_upgrade(self):
-        print("Upgrade DB...")
+    def cmd_db_upgrade(self, revision: str = None):
+        if revision is None:
+            revision = self._get_latest_revision()
+        config = self._get_alembic_config()
+        alembic.command.upgrade(config, revision)
 
-    def cmd_db_downgrade(self):
-        print("Downgrade DB...")
+    def cmd_db_downgrade(self, revision: str):
+        config = self._get_alembic_config()
+        alembic.command.downgrade(config, revision)
 
     def configure(self, config):
         # parse config options
@@ -193,7 +227,6 @@ class DatabasePlugin(Plugin):
                     click.option(
                         "-r",
                         "--revision",
-                        default=None,
                         help="Identifier of the down revision to apply. Left empty means previous.",
                     )
                 ],
